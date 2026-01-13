@@ -62,7 +62,7 @@ for arg in "$@"; do
   esac
 done
 
-if [[ -z "$REPO" ]]; then
+if [[ -z "${REPO:-}" ]]; then
   echo "--repo is required (e.g. dca, QuickBooks)"
   exit 1
 fi
@@ -103,11 +103,34 @@ for ISSUE in "${ISSUES[@]}"; do
     "$REPO_API/issues/$ISSUE" \
     > "$REPO_DIR/issue_${ISSUE}.json"
 
+  ISSUE_JSON="$REPO_DIR/issue_${ISSUE}.json"
+  ISSUE_NODE_ID=$(jq -r '.node_id' "$ISSUE_JSON")
+  echo "Node ID: $ISSUE_NODE_ID"
+
   curl -sSL \
     -H "Accept: application/vnd.github+json" \
     -H "Authorization: Bearer $GITHUB_TOKEN" \
     "$REPO_API/issues/$ISSUE/events" \
     > "$REPO_DIR/issue_events_${ISSUE}.json"
+
+QUERY_JSON=$(cat <<EOF
+{
+  "query": "query(\$issueId: ID!) { node(id: \$issueId) { ... on Issue { title number projectItems(first: 10) { nodes { fieldValues(first: 10) { nodes { ... on ProjectV2ItemFieldSingleSelectValue { field { name } value } } } } } } } }",
+  "variables": {
+    "issueId": "$ISSUE_NODE_ID"
+  }
+}
+EOF
+)
+
+  # Current error:
+  # {"errors":[{"path":["query","node","... on Issue","projectItems","nodes","fieldValues","nodes","... on ProjectV2ItemFieldSingleSelectValue","field","name"],"extensions":{"code":"selectionMismatch","nodeName":"ProjectV2FieldConfiguration"},"locations":[{"line":1,"column":185}],"message":"Selections can't be made directly on unions (see selections on ProjectV2FieldConfiguration)"},{"path":["query","node","... on Issue","projectItems","nodes","fieldValues","nodes","... on ProjectV2ItemFieldSingleSelectValue","value"],"extensions":{"code":"undefinedField","typeName":"ProjectV2ItemFieldSingleSelectValue","fieldName":"value"},"locations":[{"line":1,"column":200}],"message":"Field 'value' doesn't exist on type 'ProjectV2ItemFieldSingleSelectValue'"}]}
+
+  curl -sSL -H "Authorization: Bearer $GITHUB_TOKEN" \
+    -H "Accept: application/vnd.github+json" \
+    -X POST https://api.github.com/graphql \
+    -d "$QUERY_JSON"
+    > "$REPO_DIR/issue_metadata_${ISSUE}.json"
 done
 
 echo "[$REPO] Data collection complete → $REPO_DIR/"
