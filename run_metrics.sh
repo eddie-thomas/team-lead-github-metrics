@@ -41,9 +41,10 @@ print_help() {
   printf "  %-20s %s\n" "--repo REPO" "Specify a single repository to operate on."
   printf "  %-20s %s\n" "--prs PR1 PR2 ..." "Specify one or more pull requests to fetch/analyze."
   printf "  %-20s %s\n" "--issues ISSUE1 ..." "Specify one or more issues to fetch/analyze."
-  printf "  %-20s %s\n" "--report" "Generate a report after processing the specified PRs and/or issues."
+  printf "  %-20s %s\n" "--report" "Generate a report after processing the specified PRs and/or issues. Can be used alone."
   printf "  %-20s %s\n" "-h, --help" "Display this help message and exit."
   printf "\nExamples:\n"
+  printf "  %s --report\n" "$(basename "$0")"
   printf "  %s --repo dca --prs 4358 --report\n" "$(basename "$0")"
   printf "  %s --repo quickbooks --prs 4359 4360 --issues 4126 4134\n" "$(basename "$0")"
   printf "  %s --repo dca --issues 4126 4134\n" "$(basename "$0")"
@@ -105,12 +106,12 @@ for arg in "$@"; do
       MODE="report"
       REPORT=true
       ;;
-    --*|-*|*)  # Catch-all for unknown flags
+    --*|-*)  # Catch-all for unknown flags
       echo "Unknown option: $arg"
       print_help
       exit 1
       ;;
-    *)
+      *)
       case "$MODE" in
         repo)
           REPO="$arg"
@@ -130,6 +131,12 @@ for arg in "$@"; do
 done
 
 if [[ -z "${REPO:-}" ]]; then
+  if [[ "${REPORT:-}" == "true" ]]; then
+    clear
+    source .venv/bin/activate
+    python main.py
+    exit 0
+  fi
   echo "--repo is required (e.g. dca, QuickBooks)"
   exit 1
 fi
