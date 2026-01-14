@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+
 def extract_pr_review_metrics(reviews: list[dict]):
     """
     Reads a JSON file with GitHub PR review data and extracts key metrics.
@@ -25,10 +26,9 @@ def extract_pr_review_metrics(reviews: list[dict]):
 
     return metrics
 
-def load_pr_review_metrics_from_dir(dir_path: str | Path) -> list[dict]:
-    dir_path = Path(dir_path)
 
-    print(dir_path.resolve())
+def load_pr_review_metrics_from_dir(dir_path: str) -> list[dict]:
+    dir_path = Path(dir_path)
 
     results = []
 

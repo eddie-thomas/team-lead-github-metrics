@@ -23,6 +23,10 @@ def extract_pr_metrics(pr_json: Dict[str, Any]) -> Dict[str, Any]:
     closed_at = parse_github_ts(pr_json.get("closed_at"))
     merged_at = parse_github_ts(pr_json.get("merged_at"))
 
+    for key in ["number", "title"]:
+        if key not in pr_json:
+            raise Exception("Cannot parse the issue, data is missing!")
+
     metrics = {
         # Identity
         "pr_number": pr_json["number"],
@@ -39,17 +43,17 @@ def extract_pr_metrics(pr_json: Dict[str, Any]) -> Dict[str, Any]:
         "mergeable_state": pr_json.get("mergeable_state"),
 
         # Timestamps
-        "created_at": created_at,
-        "updated_at": updated_at,
-        "closed_at": closed_at,
-        "merged_at": merged_at,
+        "created_at": created_at.isoformat() if created_at else None,
+        "updated_at": updated_at.isoformat() if updated_at else None,
+        "closed_at": closed_at.isoformat() if closed_at else None,
+        "merged_at": merged_at.isoformat() if merged_at else None,
 
         # Durations (hours)
         "hours_open": hours_between(created_at, merged_at or now)
-            if created_at else None,
+        if created_at else None,
 
         "hours_to_merge": hours_between(created_at, merged_at)
-            if created_at and merged_at else None,
+        if created_at and merged_at else None,
 
         # Review posture
         "requested_reviewers": [
@@ -74,15 +78,13 @@ def extract_pr_metrics(pr_json: Dict[str, Any]) -> Dict[str, Any]:
     return metrics
 
 
-def load_pr_metrics_from_dir(dir_path: str | Path) -> list[dict]:
+def load_pr_metrics_from_dir(dir_path: str) -> list[dict]:
     dir_path = Path(dir_path)
-
-    print(dir_path.resolve())
 
     results = []
 
     for file in sorted(dir_path.rglob("*/pull_*.json")):
-        print(f"Pulling data from {file.name}...")
+        # print(f"Pulling data from {file.name}...")
         # Skip review files
         if "reviews" in file.name:
             continue

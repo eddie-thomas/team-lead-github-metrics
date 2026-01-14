@@ -27,15 +27,13 @@ def extract_issue_metrics(issue_json: dict) -> dict:
     return metrics
 
 
-def load_issue_metrics_from_dir(dir_path: str | Path) -> list[dict]:
+def load_issue_metrics_from_dir(dir_path: str) -> list[dict]:
     dir_path = Path(dir_path)
-
-    print(dir_path.resolve())
 
     results = []
 
     for file in sorted(dir_path.rglob("*/issue_*.json")):
-        print(f"Pulling data from {file.name}...")
+        # print(f"Pulling data from {file.name}...")
         # Skip review files
         if "events" in file.name:
             continue

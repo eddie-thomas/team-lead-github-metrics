@@ -36,6 +36,8 @@ GitHub supports **fine-grained PATs**, which are scoped to only the permissions 
 - **Pull requests: Read**
 - **Metadata: Read**
 
+> Note: We'll want to add read access for **Project v2**
+
 11. Generate the token and copy it
 
 If your org requires approval for fine-grained PATs, it may show as _pending_ until an admin approves it.
@@ -63,10 +65,13 @@ EXPIRED_DATE=1799564400
 
 ## Step 3 — Run the script
 
-Once the environment variables are loaded:
+Once the environment file exists you can run the script:
 
 ```bash
-./run_metrics.sh
+./run_metrics.sh --repo dca --issues 1234 --report
+
+# Run the help command for program details
+./run_metrics.sh --help
 ```
 
 The script will:
@@ -74,7 +79,7 @@ The script will:
 - Check that the token has not expired
 - Perform authenticated requests to GitHub’s API
 - Save results to a temporary output directory (`/temp`)
-- Print out a complete report of the repository stats
+- **Optionally** prints out a complete report of the repository stats (use the `--report` flag to output the report)
 
 ---
 
