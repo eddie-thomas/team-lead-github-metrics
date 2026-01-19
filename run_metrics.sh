@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -eo pipefail
 
 # Get to this directory, in case this file is executed from a random place
 cd "$(dirname "$0")"
@@ -27,6 +27,8 @@ fi
 OWNER="semanticarts"
 API_BASE="https://api.github.com/repos/$OWNER"
 TEMP_DIR="temp"
+ISSUES=()
+PRS=()
 
 # -------------------------
 # Helper functions
@@ -151,7 +153,7 @@ start_spinner "Fetching GitHub PRs..."
 # -------------------------
 # Fetch PR data
 # -------------------------
-for PR in "${PRS[@]:-}"; do
+for PR in "${PRS[@]}"; do
   printf "\r\033[K[$REPO] Fetching PR $PR\n"
 
   curl -sSL \
@@ -173,7 +175,7 @@ start_spinner "Fetching GitHub Issues..."
 # -------------------------
 # Fetch Issue data
 # -------------------------
-for ISSUE in "${ISSUES[@]:-}"; do
+for ISSUE in "${ISSUES[@]}"; do
   printf "\r\033[K[$REPO] Fetching Issue $ISSUE\n"
 
   curl -sSL \

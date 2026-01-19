@@ -130,7 +130,7 @@ def create_report(data: list[list[dict]]):
     median_merge_time_width = len(f"{median_merge_time:>.0f}")
     print(f"{'Median PR time to merge:':42} {median_merge_time:>{median_merge_time_width}.0f} days")
     average_merge_time_width = len(f"{review_compliance_rate:>.0f}")
-    print(f"{'Average PR time to merge:':41} {average_merge_time:>{average_merge_time_width}.0f} days")
+    print(f"{'Average PR time to merge:':42} {average_merge_time:>{average_merge_time_width}.0f} days")
     print()
 
     review_compliance_rate_width = len(f"{review_compliance_rate:>.1f}")
@@ -151,12 +151,3 @@ def create_report(data: list[list[dict]]):
 
     print(LINE)
     print()
-
-# ./run_metrics.sh \
-#   --repo dca \
-#   --issues 4017 4346 4357 4345 4236 4275 4340 4331 4339 4250 4379 4134 4092 4334 4364 4063 4128 4307 4055 4105 4140 4230 4302 \
-#   --prs 4356 4378 4269 4359 4347 4337 4321 4360 4362 4342 4380 4376 4118 4377 4127
-
-# ./run_metrics.sh \
-#   --repo quickbooks \
-#   --prs 115
