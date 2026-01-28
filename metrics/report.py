@@ -14,7 +14,7 @@ def hours_between(start: datetime, end: datetime):
     return (end - start).total_seconds() / 3600
 
 
-def create_report(data: list[list[dict]]):
+def create_report(data: list[list[dict]], title: str):
     issues_data = data[0]
     prs_data = data[1]
     reviews_data = [item for sublist in data[2]
@@ -110,7 +110,7 @@ def create_report(data: list[list[dict]]):
 
     print()
     print(LINE)
-    print("Weekly Engineering Flow Metrics")
+    print(title)
     print(LINE)
 
     median_first_response_width = len(f"{median_first_response:>.2f}")

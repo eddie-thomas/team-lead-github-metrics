@@ -29,6 +29,7 @@ API_BASE="https://api.github.com/repos/$OWNER"
 TEMP_DIR="temp"
 ISSUES=()
 PRS=()
+TITLE="Weekly Engineering Flow Metrics"
 
 # -------------------------
 # Helper functions
@@ -44,6 +45,7 @@ print_help() {
   printf "  %-20s %s\n" "--prs PR1 PR2 ..." "Specify one or more pull requests to fetch/analyze."
   printf "  %-20s %s\n" "--issues ISSUE1 ..." "Specify one or more issues to fetch/analyze."
   printf "  %-20s %s\n" "--report" "Generate a report after processing the specified PRs and/or issues. Can be used alone."
+  printf "  %-20s %s\n" "-t, --title" "Define a specific title for the report."
   printf "  %-20s %s\n" "-h, --help" "Display this help message and exit."
   printf "\nExamples:\n"
   printf "  %s --report\n" "$(basename "$0")"
@@ -82,6 +84,15 @@ stop_spinner() {
   fi
 }
 
+run_report() {
+  if [[ "${REPORT:-}" == "true" ]]; then
+    clear
+    source .venv/bin/activate
+    python main.py "$TITLE"
+    exit 0
+  fi
+}
+
 # Ensure cleanup on exit
 trap stop_spinner EXIT INT TERM
 
@@ -94,6 +105,9 @@ for arg in "$@"; do
     --help|-h)
       print_help
       exit 0
+      ;;
+    --title|-t)
+      MODE="title"
       ;;
     --repo)
       MODE="repo"
@@ -127,18 +141,16 @@ for arg in "$@"; do
         report)
           REPORT=true
           ;;
+        title)
+          TITLE="$arg"
+          ;;
       esac
       ;;
   esac
 done
 
 if [[ -z "${REPO:-}" ]]; then
-  if [[ "${REPORT:-}" == "true" ]]; then
-    clear
-    source .venv/bin/activate
-    python main.py
-    exit 0
-  fi
+  run_report
   echo "--repo is required (e.g. dca, QuickBooks)"
   exit 1
 fi
@@ -208,8 +220,4 @@ stop_spinner
 
 printf "\r\033[K[$REPO] Data collection complete → $REPO_DIR/\n\n"
 
-if [[ "${REPORT:-}" == "true" ]]; then
-  clear
-  source .venv/bin/activate
-  python main.py
-fi
+run_report
