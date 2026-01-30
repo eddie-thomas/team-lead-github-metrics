@@ -15,7 +15,7 @@ def hours_between(start: datetime, end: datetime) -> float:
     return (end - start).total_seconds() / 3600
 
 
-def extract_pr_metrics(pr_json: Dict[str, Any]) -> Dict[str, Any]:
+def extract_pr_metrics(pr_json: Dict[str, Any], filename: str) -> Dict[str, Any]:
     now = datetime.now(timezone.utc)
 
     created_at = parse_github_ts(pr_json.get("created_at"))
@@ -25,7 +25,7 @@ def extract_pr_metrics(pr_json: Dict[str, Any]) -> Dict[str, Any]:
 
     for key in ["number", "title"]:
         if key not in pr_json:
-            raise Exception("Cannot parse the issue, data is missing!")
+            raise Exception(f"Cannot parse the issue \"{filename}\", data is missing!")
 
     metrics = {
         # Identity
@@ -84,14 +84,15 @@ def load_pr_metrics_from_dir(dir_path: str) -> list[dict]:
     results = []
 
     for file in sorted(dir_path.rglob("*/pull_*.json")):
+        filename = file.name
         # print(f"Pulling data from {file.name}...")
         # Skip review files
-        if "reviews" in file.name:
+        if "reviews" in filename:
             continue
 
         with file.open() as f:
             pr_data = json.load(f)
 
-        results.append(extract_pr_metrics(pr_data))
+        results.append(extract_pr_metrics(pr_data, filename))
 
     return results
