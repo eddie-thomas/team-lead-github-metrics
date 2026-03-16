@@ -1,0 +1,8 @@
+# Commands for Iteration 24
+
+```bash
+./run_metrics.sh --issues 4547 4531 4468 4557 4515 4063 4554 4586 4582 4591 4540 4303 4578 4553 3672 4415 4604 4597 4601 4552 2851 4536 4616 4498 4567 4528 --prs 4606 4620 4631 4127 4628 4629 4587 4583 4584 4581 4619 4574 4622 4621 4592 4605 4603 4592 4602 4563 --repo dca
+./run_metrics.sh --issues 128 129 130 --prs 134 136 135 --repo quickbooks
+
+./run_metrics.sh --report --title "Spark | Iteration 24 | Mar 2 - Mar 15"
+```
