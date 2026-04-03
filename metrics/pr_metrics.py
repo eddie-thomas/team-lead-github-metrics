@@ -25,7 +25,7 @@ def extract_pr_metrics(pr_json: Dict[str, Any], filename: str) -> Dict[str, Any]
 
     for key in ["number", "title"]:
         if key not in pr_json:
-            raise Exception(f"Cannot parse the issue \"{filename}\", data is missing!")
+            raise Exception(f'Cannot parse the issue "{filename}", data is missing!')
 
     metrics = {
         # Identity
@@ -34,35 +34,29 @@ def extract_pr_metrics(pr_json: Dict[str, Any], filename: str) -> Dict[str, Any]
         "repo": pr_json["base"]["repo"]["full_name"],
         "author": pr_json["user"]["login"],
         "author_association": pr_json.get("author_association"),
-
         # State
         "state": pr_json["state"],
         "draft": pr_json["draft"],
         "merged": pr_json["merged"],
         "mergeable": pr_json.get("mergeable"),
         "mergeable_state": pr_json.get("mergeable_state"),
-
         # Timestamps
         "created_at": created_at.isoformat() if created_at else None,
         "updated_at": updated_at.isoformat() if updated_at else None,
         "closed_at": closed_at.isoformat() if closed_at else None,
         "merged_at": merged_at.isoformat() if merged_at else None,
-
         # Durations (hours)
-        "hours_open": hours_between(created_at, merged_at or now)
-        if created_at else None,
-
-        "hours_to_merge": hours_between(created_at, merged_at)
-        if created_at and merged_at else None,
-
+        "hours_open": (
+            hours_between(created_at, merged_at or now) if created_at else None
+        ),
+        "hours_to_merge": (
+            hours_between(created_at, merged_at) if created_at and merged_at else None
+        ),
         # Review posture
         "requested_reviewers": [
             r["login"] for r in pr_json.get("requested_reviewers", [])
         ],
-        "requested_reviewers_count": len(
-            pr_json.get("requested_reviewers", [])
-        ),
-
+        "requested_reviewers_count": len(pr_json.get("requested_reviewers", [])),
         # Activity / size
         "comments_count": pr_json.get("comments", 0),
         "review_comments_count": pr_json.get("review_comments", 0),
@@ -70,7 +64,6 @@ def extract_pr_metrics(pr_json: Dict[str, Any], filename: str) -> Dict[str, Any]
         "additions": pr_json.get("additions", 0),
         "deletions": pr_json.get("deletions", 0),
         "changed_files": pr_json.get("changed_files", 0),
-
         # Labels
         "labels": [label["name"] for label in pr_json.get("labels", [])],
     }

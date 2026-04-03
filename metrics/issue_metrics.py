@@ -35,7 +35,7 @@ def load_issue_metrics_from_dir(dir_path: str) -> list[dict]:
     for file in sorted(dir_path.rglob("*/issue_*.json")):
         # print(f"Pulling data from {file.name}...")
         # Skip review files
-        if "events" in file.name:
+        if any(s in file.name for s in ("events", "transitions", "pr_map")):
             continue
 
         with file.open() as f:

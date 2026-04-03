@@ -15,14 +15,16 @@ def extract_pr_review_metrics(reviews: list[dict]):
         if "OWNER" == review.get("author_association"):
             continue
 
-        metrics.append({
-            "reviewer": review.get("user", {}).get("login"),
-            "state": review.get("state"),
-            "submitted_at": review.get("submitted_at"),
-            "review_url": review.get("html_url"),
-            "commit_id": review.get("commit_id"),
-            "author_association": review.get("author_association"),
-        })
+        metrics.append(
+            {
+                "reviewer": review.get("user", {}).get("login"),
+                "state": review.get("state"),
+                "submitted_at": review.get("submitted_at"),
+                "review_url": review.get("html_url"),
+                "commit_id": review.get("commit_id"),
+                "author_association": review.get("author_association"),
+            }
+        )
 
     return metrics
 

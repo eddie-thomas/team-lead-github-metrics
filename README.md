@@ -63,15 +63,37 @@ EXPIRED_DATE=1799564400
 
 ---
 
-## Step 3 — Run the script
+## Step 3 — Add a virtual environment
 
-Once the environment file exists you can run the script:
+Create and activate a Python virtual environment, then install dependencies:
 
 ```bash
-./run_metrics.sh --repo dca --issues 1234 --report
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
 
-# Run the help command for program details
-./run_metrics.sh --help
+Note: The `--summary` flag uses [Ollama](https://ollama.com) to generate LLM-powered summaries. Make sure Ollama is installed and running locally before using it.
+
+---
+
+## Step 4 — Run the script
+
+### Iteration script (recommended)
+
+Fetches all issues and PRs for a given iteration from the GitHub Projects v2 board:
+
+```bash
+./query_iteration.sh <iteration_number>
+
+# Skip re-fetching data and just re-run the report
+./query_iteration.sh 24 --no-fetch
+
+# Generate an LLM-powered summary (requires Ollama)
+./query_iteration.sh 24 --summary
+
+# Combine flags
+./query_iteration.sh 24 --no-fetch --summary
 ```
 
 The script will:
@@ -79,7 +101,25 @@ The script will:
 - Check that the token has not expired
 - Perform authenticated requests to GitHub’s API
 - Save results to a temporary output directory (`/temp`)
-- **Optionally** prints out a complete report of the repository stats (use the `--report` flag to output the report)
+- **Optionally** print a full metrics report (use the `--report` flag)
+
+#### What `--report` outputs
+
+A color-coded terminal report including:
+
+- Median and average PR time to first review (SLA target: ≤ 24 hrs)
+- Median and average PR time to merge
+- Review compliance rate — % of PRs reviewed within 24 hours
+- Per-reviewer breakdown (median, average, and review count)
+- Issues completed this sprint (count and %)
+- Issue velocity — status transition counts and active days per issue, with flags for long-running items (> 14 days)
+
+#### What `--summary` outputs
+
+An LLM-generated executive summary (using `qwen2.5:7b` via Ollama) with one punchy bullet point per issue and 2–4 concrete sub-bullets. Results are printed to the terminal and also saved as:
+
+- `<iteration>.md` — Markdown file in the temp data directory
+- `<iteration>.html` — Styled HTML file ready to share
 
 ---
 
