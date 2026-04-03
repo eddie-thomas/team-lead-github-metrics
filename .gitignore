@@ -1,5 +1,5 @@
 .venv
-temp
+temp/**/*.json
 *.env
 
 # Python stuff
