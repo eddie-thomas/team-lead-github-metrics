@@ -19,6 +19,7 @@ def create_report(data: list[list[dict]], title: str):
     prs_data = data[1]
     reviews_data = [item for sublist in data[2] for item in sublist] if data[2] else []
     velocity_data = data[3] if len(data) > 3 else []
+    rollover_data = data[4] if len(data) > 4 else []
 
     # -----------------------------
     # Prepare timestamps
@@ -223,7 +224,6 @@ def create_report(data: list[list[dict]], title: str):
             if v["total_active_hours"] / 24 > LONG_RUNNING_THRESHOLD_DAYS
         ]
 
-        print(LINE)
         print("Issue Velocity")
         print(LINE)
         print(f"{'Issues tracked (with transitions):':42} {len(velocity_data)}")
@@ -255,5 +255,35 @@ def create_report(data: list[list[dict]], title: str):
             )
             print()
 
+        print(LINE)
+        print()
+
+    # -----------------------------
+    # Iteration rollovers
+    # -----------------------------
+    if rollover_data:
+        print("Iteration Rollovers")
+        print(LINE)
+        print(f"  {'Issue':<12} {'Repo':<20} {'Rollovers':>9}   Iterations")
+        print(f"  {'─' * 12} {'─' * 20} {'─' * 9}   {'─' * 20}")
+        for r in rollover_data:
+            iters = " → ".join(str(i) for i in r["iterations"])
+            flag = (
+                f" {YELLOW}⚑ {r['rollover_count']} rollover(s){RESET}"
+                if r["rollover_count"] > 1
+                else ""
+            )
+            print(
+                f"  #{r['issue_number']:<11} {r['repo']:<20} {r['rollover_count']:>9}   {iters}{flag}"
+            )
+        multi = sum(1 for r in rollover_data if r["rollover_count"] > 1)
+        print()
+        print(
+            f"  {len(rollover_data)} issue(s) carried over from a previous iteration",
+            end="",
+        )
+        if multi:
+            print(f", {YELLOW}{multi} carried over more than once{RESET}", end="")
+        print()
         print(LINE)
         print()

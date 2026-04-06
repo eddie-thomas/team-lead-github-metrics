@@ -6,6 +6,7 @@ from metrics import (
     load_issue_velocity_from_dir,
     load_pr_metrics_from_dir,
     load_pr_review_metrics_from_dir,
+    load_rollover_metrics_from_dir,
 )
 
 
@@ -19,6 +20,7 @@ if __name__ == "__main__":
         load_pr_metrics_from_dir(data_dir),
         load_pr_review_metrics_from_dir(data_dir),
         load_issue_velocity_from_dir(data_dir),
+        load_rollover_metrics_from_dir(data_dir),
     ]
 
     create_report(data, title)

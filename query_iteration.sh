@@ -5,13 +5,37 @@ set -eo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/github.env"
 
+print_usage() {
+  echo "Usage: $0 <iteration_number> [OPTIONS]"
+  echo ""
+  echo "  Fetches all issues and PRs from a GitHub Projects v2 iteration and"
+  echo "  generates a metrics report via main.py."
+  echo ""
+  echo "Arguments:"
+  echo "  <iteration_number>   The iteration number to query (e.g. 24)"
+  echo ""
+  echo "Options:"
+  echo "  --summary            Generate an LLM summary of the iteration after fetching"
+  echo "  --no-fetch           Skip data fetching and use existing cached data"
+  echo "  -h, --help           Show this help message"
+  echo ""
+  echo "Examples:"
+  echo "  $0 24"
+  echo "  $0 24 --summary"
+  echo "  $0 24 --no-fetch --summary"
+}
+
 if [ -z "$1" ]; then
-  echo "Usage: $0 <iteration_number> [--summary] [--no-fetch]"
-  echo "  Example: $0 24"
-  echo "  Example: $0 24 --summary"
-  echo "  Example: $0 24 --no-fetch --summary"
-  exit 1
+  print_usage
+  exit 0
 fi
+
+for arg in "$@"; do
+  if [ "$arg" = "-h" ] || [ "$arg" = "--help" ]; then
+    print_usage
+    exit 0
+  fi
+done
 
 ITERATION_NUM="$1"
 SUMMARY_FLAG=""
@@ -81,23 +105,46 @@ fi
 # -------------------------
 start_spinner "Querying $ITERATION_TITLE from Projects v2..."
 
-RESPONSE=$(curl -s -X POST https://api.github.com/graphql \
-  -H "Authorization: Bearer $GITHUB_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "query": "query { organization(login: \"semanticarts\") { projectV2(number: 82) { items(first: 100) { nodes { content { __typename ... on Issue { number title state url repository { name } } ... on PullRequest { number title state url repository { name } } } iteration: fieldValueByName(name: \"Iteration\") { ... on ProjectV2ItemFieldIterationValue { title iterationId } } status: fieldValueByName(name: \"Status\") { ... on ProjectV2ItemFieldSingleSelectValue { name } } } } } } }"
-  }')
+ALL_NODES="[]"
+CURSOR=""
+
+while true; do
+  AFTER_ARG=""
+  if [ -n "$CURSOR" ]; then
+    AFTER_ARG=", after: \\\"$CURSOR\\\""
+  fi
+
+  RESPONSE=$(curl -s -X POST https://api.github.com/graphql \
+    -H "Authorization: Bearer $GITHUB_TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "{
+      \"query\": \"query { organization(login: \\\"semanticarts\\\") { projectV2(number: 82) { items(first: 100$AFTER_ARG) { pageInfo { hasNextPage endCursor } nodes { content { __typename ... on Issue { number title state url repository { name } } ... on PullRequest { number title state url repository { name } } } iteration: fieldValueByName(name: \\\"Iteration\\\") { ... on ProjectV2ItemFieldIterationValue { title iterationId } } status: fieldValueByName(name: \\\"Status\\\") { ... on ProjectV2ItemFieldSingleSelectValue { name } } } } } } }\"
+    }")
+
+  if echo "$RESPONSE" | jq -e '.errors' > /dev/null 2>&1; then
+    stop_spinner
+    echo "API error:"
+    echo "$RESPONSE" | jq '.errors'
+    exit 1
+  fi
+
+  PAGE_NODES=$(echo "$RESPONSE" | jq '.data.organization.projectV2.items.nodes')
+  ALL_NODES=$(echo "$ALL_NODES" | jq --argjson p "$PAGE_NODES" '. + $p')
+
+  HAS_NEXT=$(echo "$RESPONSE" | jq -r '.data.organization.projectV2.items.pageInfo.hasNextPage')
+  CURSOR=$(echo "$RESPONSE" | jq -r '.data.organization.projectV2.items.pageInfo.endCursor')
+
+  if [ "$HAS_NEXT" != "true" ]; then
+    break
+  fi
+
+  set_spinner_msg "Querying $ITERATION_TITLE from Projects v2... ($(echo "$ALL_NODES" | jq 'length') items fetched)"
+done
 
 stop_spinner
 
-if echo "$RESPONSE" | jq -e '.errors' > /dev/null 2>&1; then
-  echo "API error:"
-  echo "$RESPONSE" | jq '.errors'
-  exit 1
-fi
-
-ITEMS=$(echo "$RESPONSE" | jq --arg title "$ITERATION_TITLE" '
-  [.data.organization.projectV2.items.nodes[]
+ITEMS=$(echo "$ALL_NODES" | jq --arg title "$ITERATION_TITLE" '
+  [.[]
   | select(.iteration | type == "object" and .title == $title)
   | {
       type: .content.__typename,
