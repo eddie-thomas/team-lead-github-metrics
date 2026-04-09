@@ -12,7 +12,7 @@ print_usage() {
   echo "  generates a metrics report via main.py."
   echo ""
   echo "Arguments:"
-  echo "  <iteration_number>   The iteration number to query (e.g. 24)"
+  echo "  current | <iteration_number>   The iteration number to query (e.g. current, 24)"
   echo ""
   echo "Options:"
   echo "  --summary            Generate an LLM summary of the iteration after fetching"
@@ -21,7 +21,7 @@ print_usage() {
   echo ""
   echo "Examples:"
   echo "  $0 24"
-  echo "  $0 24 --summary"
+  echo "  $0 current --summary"
   echo "  $0 24 --no-fetch --summary"
 }
 
@@ -46,7 +46,28 @@ for arg in "${@:2}"; do
     --no-fetch) NO_FETCH=true ;;
   esac
 done
+
 ITERATION_TITLE="Iteration $ITERATION_NUM"
+
+if [[ "$ITERATION_NUM" == "current" ]]; then
+  echo "Fetching current iteration..."
+  ITERATION_TITLE=$(curl -s -X POST https://api.github.com/graphql \
+    -H "Authorization: Bearer $GITHUB_TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{
+      "query": "query { organization(login: \"semanticarts\") { projectV2(number: 82) { field(name: \"Iteration\") { ... on ProjectV2IterationField { configuration { iterations { id title startDate duration } } } } } } }"
+    }' | jq -r '
+      .data.organization.projectV2.field.configuration.iterations[]
+      | . as $i
+      | ($i.startDate | strptime("%Y-%m-%d") | mktime) as $start
+      | ($start + ($i.duration * 86400)) as $end
+      | now as $now
+      | select($start <= $now and $now < $end)
+      | .title'
+  )
+  ITERATION_NUM=$(echo "$ITERATION_TITLE" | grep -oE '[0-9]+$')
+fi
+
 OWNER="semanticarts"
 API_BASE="https://api.github.com/repos/$OWNER"
 TEMP_DIR="$SCRIPT_DIR/temp/iteration_${ITERATION_NUM}"

@@ -23,7 +23,7 @@ def build_issue_context(data_dir: str) -> list[dict]:
             continue
 
         issue = _load_json(issue_file)
-        if not issue:
+        if not issue or issue.get("state_reason") != "completed":
             continue
 
         number = issue.get("number")
@@ -100,6 +100,27 @@ def build_issue_prompt(issue: dict) -> str:
     return "\n".join(lines)
 
 
+def call_ollama_with_messages(messages: list[dict]) -> str:
+    payload = json.dumps(
+        {
+            "model": OLLAMA_MODEL,
+            "messages": messages,
+            "stream": False,
+        }
+    ).encode()
+
+    req = urllib.request.Request(
+        OLLAMA_URL,
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
+    with urllib.request.urlopen(req, timeout=120) as resp:
+        result = json.loads(resp.read())
+        return result["message"]["content"].strip()
+
+
 def call_ollama(prompt: str) -> str:
     payload = json.dumps(
         {
@@ -141,10 +162,13 @@ def generate_summary(data_dir: str, title: str):
 
     md_lines = [f"# Executive Summary — {title}", ""]
     html_items = []
+    issue_summaries = []
 
     for i, issue in enumerate(issues, 1):
         print(f"[{i}/{len(issues)}] Summarizing Issue #{issue['number']}...", end="\r")
-        response = call_ollama(build_issue_prompt(issue))
+        issue_prompt = build_issue_prompt(issue)
+        response = call_ollama(issue_prompt)
+        issue_summaries.append((issue_prompt, response))
 
         # Build link collections
         md_links = []
@@ -215,7 +239,43 @@ def generate_summary(data_dir: str, title: str):
             f"<ul>{sub_html}</ul></li>"
         )
 
-        # VERIFY
+    # Call Ollama once more, but with every prompt and every response, so it has full context of the summary
+    # and can summarize the most important points across all issues.
+    print(f"\033[KGenerating sprint highlights...", end="\r")
+    highlight_prompt = (
+        "You have just reviewed every work item completed this sprint. "
+        "Your task is to select and rank the 3–6 most business-significant items for a C-suite audience. "
+        "Be ruthlessly selective. Most items will not make this list.\n\n"
+        "Prioritize items in this order:\n"
+        "1. Revenue or financial impact (pricing changes, commission rates, billing logic, payroll accuracy)\n"
+        "2. Compliance, legal, or audit risk (anything that was broken and could create liability)\n"
+        "3. Significant user-facing capability added or restored\n"
+        "4. Workflow or process changes that save meaningful time or eliminate manual work\n\n"
+        "Do NOT include: minor bug fixes with no financial or user impact, internal refactors, small UI tweaks, "
+        "configuration file changes, or anything a non-technical stakeholder would not care about. "
+        "If something sounds like 'minor fix' or 'small update', leave it out.\n\n"
+        "Each bullet must name the specific thing that changed and why it matters to the business — not how it was built. "
+        "Do not repeat detail from the full summary — distill it. "
+        "No headers, no preamble, no closing remarks. Just the bullets.\n\n"
+        "Format:\n• <outcome-first sentence naming the specific thing and its business impact>"
+    )
+    chained_messages = []
+    for issue_prompt, issue_response in issue_summaries:
+        chained_messages.append({"role": "user", "content": issue_prompt})
+        chained_messages.append({"role": "assistant", "content": issue_response})
+    chained_messages.append({"role": "user", "content": highlight_prompt})
+    highlights = call_ollama_with_messages(chained_messages)
+
+    print(f"\033[K")
+    print("Sprint Highlights")
+    print(highlights)
+    print()
+    md_lines.insert(1, f"## Sprint Highlights\n\n{highlights}\n\n---")
+    html_highlights = "".join(
+        f"<li><strong>{line.lstrip('• ').strip()}</strong></li>"
+        for line in highlights.splitlines()
+        if line.strip().startswith("•")
+    )
 
     print(LINE)
     print()
@@ -242,6 +302,11 @@ def generate_summary(data_dir: str, title: str):
 </head>
 <body>
 <h1>Executive Summary — {title}</h1>
+<h2 style="font-size:15px; margin-top:20px;">Sprint Highlights</h2>
+<ul>
+{html_highlights}
+</ul>
+<hr style="margin: 24px 0;">
 <ul>
 {html_body}
 </ul>

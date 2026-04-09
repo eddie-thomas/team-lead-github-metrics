@@ -1,6 +1,9 @@
 from datetime import datetime
 import statistics
 
+from metrics import ALLOWED_REVIEWERS
+from metrics.blocker_metrics import compute_blocker_summary
+
 # -----------------------------
 # Utility functions
 # -----------------------------
@@ -19,7 +22,6 @@ def create_report(data: list[list[dict]], title: str):
     prs_data = data[1]
     reviews_data = [item for sublist in data[2] for item in sublist] if data[2] else []
     velocity_data = data[3] if len(data) > 3 else []
-    rollover_data = data[4] if len(data) > 4 else []
 
     # -----------------------------
     # Prepare timestamps
@@ -168,7 +170,7 @@ def create_report(data: list[list[dict]], title: str):
         # Collect each reviewer's first review on this PR
         by_reviewer: dict[str, list] = {}
         for r in pr_reviews:
-            if r.get("submitted_at"):
+            if r.get("submitted_at") and r.get("reviewer") in ALLOWED_REVIEWERS:
                 by_reviewer.setdefault(r["reviewer"], []).append(
                     parse(r["submitted_at"])
                 )
@@ -184,9 +186,10 @@ def create_report(data: list[list[dict]], title: str):
         for reviewer, hours in sorted(reviewer_hours.items()):
             med = statistics.median(hours)
             avg = statistics.mean(hours)
-            color = sla_color(med <= 24, med <= 48)
+            med_color = sla_color(med <= 24, med <= 48)
+            avg_color = sla_color(avg <= 24, avg <= 48)
             print(
-                f"  {reviewer:<24} {color}{med:>7.1f}h{RESET}   {color}{avg:>7.1f}h{RESET}   {len(hours):>7}"
+                f"  {reviewer:<24} {med_color}{med:>7.1f}h{RESET}   {avg_color}{avg:>7.1f}h{RESET}   {len(hours):>7}"
             )
         print()
 
@@ -197,11 +200,14 @@ def create_report(data: list[list[dict]], title: str):
     )
     print()
 
-    blocker_pct = 0
+    blocker_summary = compute_blocker_summary(issues_data)
+    total_blocked = blocker_summary["total_blocked"]
+    total_resolved = blocker_summary["total_resolved"]
+    blocker_pct = (total_resolved / total_blocked * 100) if total_blocked > 0 else 0
     blocker_pct_width = len(f"{blocker_pct:>.1f}")
     print(
-        f"{'Blockers resolved within 48 hrs:':42} "
-        f"{0}/{0} ({sla_color(blocker_pct == 0, 0 > 0.8)}{blocker_pct:{blocker_pct_width}.1f}%{RESET})"
+        f"{'Blockers resolved this sprint:':42} "
+        f"{total_resolved}/{total_blocked} ({sla_color(blocker_pct > 90 if total_blocked > 0 else True, blocker_pct > 80)}{blocker_pct:{blocker_pct_width}.1f}%{RESET})"
     )
 
     print(LINE)
@@ -255,35 +261,5 @@ def create_report(data: list[list[dict]], title: str):
             )
             print()
 
-        print(LINE)
-        print()
-
-    # -----------------------------
-    # Iteration rollovers
-    # -----------------------------
-    if rollover_data:
-        print("Iteration Rollovers")
-        print(LINE)
-        print(f"  {'Issue':<12} {'Repo':<20} {'Rollovers':>9}   Iterations")
-        print(f"  {'─' * 12} {'─' * 20} {'─' * 9}   {'─' * 20}")
-        for r in rollover_data:
-            iters = " → ".join(str(i) for i in r["iterations"])
-            flag = (
-                f" {YELLOW}⚑ {r['rollover_count']} rollover(s){RESET}"
-                if r["rollover_count"] > 1
-                else ""
-            )
-            print(
-                f"  #{r['issue_number']:<11} {r['repo']:<20} {r['rollover_count']:>9}   {iters}{flag}"
-            )
-        multi = sum(1 for r in rollover_data if r["rollover_count"] > 1)
-        print()
-        print(
-            f"  {len(rollover_data)} issue(s) carried over from a previous iteration",
-            end="",
-        )
-        if multi:
-            print(f", {YELLOW}{multi} carried over more than once{RESET}", end="")
-        print()
         print(LINE)
         print()

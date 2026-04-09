@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+from metrics import ALLOWED_REVIEWERS
+
 
 def extract_pr_review_metrics(reviews: list[dict]):
     """
@@ -10,9 +12,7 @@ def extract_pr_review_metrics(reviews: list[dict]):
 
     metrics = []
     for review in reviews:
-        if "codeant-ai[bot]" == review.get("user", {}).get("login"):
-            continue
-        if "OWNER" == review.get("author_association"):
+        if review.get("user", {}).get("login") not in ALLOWED_REVIEWERS:
             continue
 
         metrics.append(
