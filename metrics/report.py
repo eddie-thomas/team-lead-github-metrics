@@ -54,10 +54,9 @@ def create_report(data: list[list[dict]], title: str):
                 f"https://github.com/{pr['repo']}/pull/{pr['pr_number']}"
             )
         ]
-        if pr_reviews:
-            first_review_ts = min(
-                parse(r["submitted_at"]) for r in pr_reviews if r.get("submitted_at")
-            )
+        reviews_with_ts = [r for r in pr_reviews if r.get("submitted_at")]
+        if reviews_with_ts:
+            first_review_ts = min(parse(r["submitted_at"]) for r in reviews_with_ts)
             first_review.append(first_review_ts)
         else:
             first_review.append(None)
