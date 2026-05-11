@@ -32,21 +32,23 @@ GitHub supports **fine-grained PATs**, which are scoped to only the permissions 
 9. Select the specific repos you need (e.g., `dca`)
 10. Under **Permissions**, grant:
 
-- **Issues: Read**
-- **Pull requests: Read**
-- **Metadata: Read**
+    - **Issues: Read**
+    - **Pull requests: Read**
+    - **Metadata: Read**
 
-> Note: We'll want to add read access for **Project v2**
+11. Switch to **Organization** tab under **Permissions** and grant:
 
-11. Generate the token and copy it
+    - **Projects: Read**
+
+12. Generate the token and copy it
 
 If your org requires approval for fine-grained PATs, it may show as _pending_ until an admin approves it.
 
 ---
 
-## Step 2 — Create your `github.env` file
+## Step 2 — Create your `./github.env` file
 
-After the PAT is approved, create a file named `github.env` in the project directory.
+After the PAT is approved, create a file named `github.env` in the root project directory.
 
 **Example content:**
 
