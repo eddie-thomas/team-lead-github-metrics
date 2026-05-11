@@ -46,9 +46,9 @@ If your org requires approval for fine-grained PATs, it may show as _pending_ un
 
 ---
 
-## Step 2 — Create your `github.env` file
+## Step 2 — Create your `./github.env` file
 
-After the PAT is approved, create a file named `github.env` in the project directory.
+After the PAT is approved, create a file named `github.env` in the root project directory.
 
 **Example content:**
 
