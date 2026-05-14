@@ -5,7 +5,8 @@ import json
 import os
 import sys
 import time
-from datetime import datetime
+from datetime import date, datetime, timedelta, timezone
+from datetime import time as dt_time
 from pathlib import Path
 
 import requests
@@ -18,9 +19,15 @@ load_dotenv(PROJECT_ROOT / "github.env")
 
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
 _DEFAULT_PROJECT_NUMBER = int(os.environ.get("PROJECT_NUMBER", "82"))
+_DEFAULT_WEEK_START = os.environ.get("WEEK_START_DAY", "monday").lower()
 OWNER = "semanticarts"
 GRAPHQL_URL = "https://api.github.com/graphql"
 API_BASE = f"https://api.github.com/repos/{OWNER}"
+
+_WEEKDAY_NAMES = {
+    "monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3,
+    "friday": 4, "saturday": 5, "sunday": 6,
+}
 
 console = Console()
 
@@ -104,8 +111,8 @@ def fetch_project_items(project_number: int, progress: Progress, task_id: object
                     nodes {{
                       content {{
                         __typename
-                        ... on Issue {{ number title state url repository {{ name }} }}
-                        ... on PullRequest {{ number title state url repository {{ name }} }}
+                        ... on Issue {{ number title state url createdAt closedAt repository {{ name }} }}
+                        ... on PullRequest {{ number title state url createdAt closedAt mergedAt repository {{ name }} }}
                       }}
                       iteration: fieldValueByName(name: "Iteration") {{
                         ... on ProjectV2ItemFieldIterationValue {{ title iterationId }}
@@ -135,6 +142,44 @@ def filter_items(nodes: list, iteration_title: str) -> list:
         if not isinstance(it, dict) or it.get("title") != iteration_title:
             continue
         content = node["content"]
+        items.append({
+            "type": content["__typename"],
+            "number": content["number"],
+            "title": content["title"],
+            "state": content["state"],
+            "status": (node.get("status") or {}).get("name", "—"),
+            "url": content["url"],
+            "repo": content["repository"]["name"],
+        })
+    return items
+
+
+def _parse_gh_dt(s: str | None) -> datetime | None:
+    if not s:
+        return None
+    return datetime.fromisoformat(s.replace("Z", "+00:00"))
+
+
+def get_week_range(weeks_back: int, week_start: int) -> tuple[date, date]:
+    today = date.today()
+    days_since_start = (today.weekday() - week_start) % 7
+    start = today - timedelta(days=days_since_start) - timedelta(weeks=weeks_back)
+    return start, start + timedelta(days=6)
+
+
+def filter_items_by_week(nodes: list, start: date, end: date) -> list:
+    start_dt = datetime.combine(start, dt_time.min, tzinfo=timezone.utc)
+    end_dt = datetime.combine(end, dt_time.max, tzinfo=timezone.utc)
+    items = []
+    for node in nodes:
+        content = node["content"]
+        if content is None:
+            continue
+        created = _parse_gh_dt(content.get("createdAt"))
+        closed = _parse_gh_dt(content.get("closedAt")) or _parse_gh_dt(content.get("mergedAt"))
+        if not ((created and start_dt <= created <= end_dt) or
+                (closed and start_dt <= closed <= end_dt)):
+            continue
         items.append({
             "type": content["__typename"],
             "number": content["number"],
@@ -252,7 +297,21 @@ def main() -> None:
     parser.add_argument(
         "iteration",
         metavar="current|<number>",
-        help="Iteration number to query (e.g. current, 24)",
+        help=(
+            "Iteration mode: iteration number or 'current'. "
+            "Week mode (--week): weeks back from current week, or 'current'."
+        ),
+    )
+    parser.add_argument(
+        "--week",
+        action="store_true",
+        help="Use calendar weeks instead of project iteration tags",
+    )
+    parser.add_argument(
+        "--week-start",
+        metavar="DAY",
+        default=None,
+        help=f"First day of the week (e.g. monday, friday; default: WEEK_START_DAY from github.env or monday)",
     )
     parser.add_argument(
         "--project",
@@ -277,6 +336,29 @@ def main() -> None:
         console.print("[red]GITHUB_TOKEN is not set in github.env or environment.[/red]")
         sys.exit(1)
 
+    # --- resolve title, temp_dir, and optional date filter ---
+    if args.week:
+        day_name = (args.week_start or _DEFAULT_WEEK_START).lower()
+        if day_name not in _WEEKDAY_NAMES:
+            console.print(f"[red]Invalid --week-start value: {day_name!r}. Use monday–sunday.[/red]")
+            sys.exit(1)
+        weeks_back = 0 if args.iteration == "current" else int(args.iteration)
+        week_start_date, week_end_date = get_week_range(weeks_back, _WEEKDAY_NAMES[day_name])
+        iteration_title = f"Week of {week_start_date} – {week_end_date}"
+        temp_dir = PROJECT_ROOT / "temp" / f"week_{week_start_date}"
+        console.print(
+            f"Date range: [bold]{week_start_date}[/bold] ({week_start_date.strftime('%A')})"
+            f" → [bold]{week_end_date}[/bold] ({week_end_date.strftime('%A')})"
+        )
+    else:
+        week_start_date = week_end_date = None
+        if args.iteration == "current":
+            # title resolved inside progress after spinner starts
+            iteration_title = None
+        else:
+            iteration_title = f"Iteration {args.iteration}"
+        temp_dir = None  # set after title is known
+
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
@@ -285,22 +367,25 @@ def main() -> None:
     ) as progress:
         task = progress.add_task("Starting...", total=None)
 
-        if args.iteration == "current":
-            progress.update(task, description="Fetching current iteration...")
-            iteration_title = resolve_current_iteration(args.project)
-            iteration_num = iteration_title.split()[-1].lstrip("0") or "0"
-        else:
-            iteration_num = args.iteration
-            iteration_title = f"Iteration {iteration_num}"
-
-        temp_dir = PROJECT_ROOT / "temp" / f"iteration_{iteration_num}"
+        if not args.week:
+            if args.iteration == "current":
+                progress.update(task, description="Fetching current iteration...")
+                iteration_title = resolve_current_iteration(args.project)
+                iteration_num = iteration_title.split()[-1].lstrip("0") or "0"
+            else:
+                iteration_num = args.iteration
+            temp_dir = PROJECT_ROOT / "temp" / f"iteration_{iteration_num}"
 
         if args.no_fetch:
             progress.console.print(f"Skipping data fetch → using existing data in [bold]{temp_dir}[/bold]")
         else:
             progress.update(task, description=f"Querying {iteration_title} from Projects v2...")
             all_nodes = fetch_project_items(args.project, progress, task)
-            items = filter_items(all_nodes, iteration_title)
+
+            if args.week:
+                items = filter_items_by_week(all_nodes, week_start_date, week_end_date)
+            else:
+                items = filter_items(all_nodes, iteration_title)
 
             progress.console.print(f"Found [bold]{len(items)}[/bold] items in {iteration_title}\n")
 
