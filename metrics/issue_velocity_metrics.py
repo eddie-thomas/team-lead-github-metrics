@@ -85,7 +85,12 @@ def load_issue_velocity_from_dir(dir_path: str) -> list[dict]:
             continue
 
         with issue_file.open() as f:
-            closed_at = json.load(f).get("closed_at")
+            issue_data = json.load(f)
+
+        if issue_data.get("title", "").startswith("EPIC:"):
+            continue
+
+        closed_at = issue_data.get("closed_at")
 
         with file.open() as f:
             transitions = json.load(f)

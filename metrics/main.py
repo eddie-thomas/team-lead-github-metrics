@@ -1,0 +1,433 @@
+"""GitHub Projects v2 iteration fetcher and metrics reporter."""
+
+import argparse
+import json
+import os
+import sys
+import time
+from datetime import date, datetime, timedelta, timezone
+from datetime import time as dt_time
+from pathlib import Path
+
+import requests
+from dotenv import load_dotenv
+from rich.console import Console
+from rich.progress import Progress, SpinnerColumn, TextColumn
+
+PROJECT_ROOT = Path(__file__).parent.parent
+load_dotenv(PROJECT_ROOT / "github.env")
+
+GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
+_DEFAULT_PROJECT_NUMBER = int(os.environ.get("PROJECT_NUMBER", "82"))
+_DEFAULT_WEEK_START = os.environ.get("WEEK_START_DAY", "monday").lower()
+OWNER = "semanticarts"
+GRAPHQL_URL = "https://api.github.com/graphql"
+API_BASE = f"https://api.github.com/repos/{OWNER}"
+
+_WEEKDAY_NAMES = {
+    "monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3,
+    "friday": 4, "saturday": 5, "sunday": 6,
+}
+
+console = Console()
+
+
+def _short(title: str, n: int = 50) -> str:
+    return title if len(title) <= n else title[: n - 1] + "…"
+
+
+def _graphql(query: str) -> dict:
+    resp = requests.post(
+        GRAPHQL_URL,
+        json={"query": query},
+        headers={
+            "Authorization": f"Bearer {GITHUB_TOKEN}",
+            "Content-Type": "application/json",
+        },
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    if "errors" in data:
+        console.print("[red]GraphQL error:[/red]", data["errors"])
+        sys.exit(1)
+    return data
+
+
+def _rest_get(url: str) -> object:
+    resp = requests.get(
+        url,
+        headers={
+            "Accept": "application/vnd.github+json",
+            "Authorization": f"Bearer {GITHUB_TOKEN}",
+        },
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+def _save(path: Path, data: object) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w") as f:
+        json.dump(data, f)
+
+
+def resolve_current_iteration(project_number: int) -> str:
+    data = _graphql(f"""
+        query {{
+          organization(login: "{OWNER}") {{
+            projectV2(number: {project_number}) {{
+              field(name: "Iteration") {{
+                ... on ProjectV2IterationField {{
+                  configuration {{
+                    iterations {{ id title startDate duration }}
+                  }}
+                }}
+              }}
+            }}
+          }}
+        }}
+    """)
+    now = time.time()
+    iterations = (
+        data["data"]["organization"]["projectV2"]["field"]
+        ["configuration"]["iterations"]
+    )
+    for it in iterations:
+        start = datetime.strptime(it["startDate"], "%Y-%m-%d").timestamp()
+        end = start + it["duration"] * 86400
+        if start <= now < end:
+            return it["title"]
+    console.print("[red]No current iteration found.[/red]")
+    sys.exit(1)
+
+
+def fetch_project_items(project_number: int, progress: Progress, task_id: object) -> list:
+    all_nodes: list = []
+    cursor: str | None = None
+    while True:
+        after = f', after: "{cursor}"' if cursor else ""
+        data = _graphql(f"""
+            query {{
+              organization(login: "{OWNER}") {{
+                projectV2(number: {project_number}) {{
+                  items(first: 100{after}) {{
+                    pageInfo {{ hasNextPage endCursor }}
+                    nodes {{
+                      content {{
+                        __typename
+                        ... on Issue {{ number title state url createdAt closedAt repository {{ name }} }}
+                        ... on PullRequest {{ number title state url createdAt closedAt mergedAt author {{ login }} repository {{ name }} }}
+                      }}
+                      iteration: fieldValueByName(name: "Iteration") {{
+                        ... on ProjectV2ItemFieldIterationValue {{ title iterationId }}
+                      }}
+                      status: fieldValueByName(name: "Status") {{
+                        ... on ProjectV2ItemFieldSingleSelectValue {{ name }}
+                      }}
+                    }}
+                  }}
+                }}
+              }}
+            }}
+        """)
+        page = data["data"]["organization"]["projectV2"]["items"]
+        all_nodes.extend(page["nodes"])
+        progress.update(task_id, description=f"Querying Projects v2... ({len(all_nodes)} items fetched)")
+        if not page["pageInfo"]["hasNextPage"]:
+            break
+        cursor = page["pageInfo"]["endCursor"]
+    return all_nodes
+
+
+def filter_items(nodes: list, iteration_title: str, exclude_epics: bool = True) -> list:
+    items = []
+    for node in nodes:
+        it = node.get("iteration")
+        if not isinstance(it, dict) or it.get("title") != iteration_title:
+            continue
+        content = node["content"]
+        if exclude_epics and content["title"].startswith("EPIC:"):
+            continue
+        items.append({
+            "type": content["__typename"],
+            "number": content["number"],
+            "title": content["title"],
+            "state": content["state"],
+            "status": (node.get("status") or {}).get("name", "—"),
+            "url": content["url"],
+            "repo": content["repository"]["name"],
+            "author": (content.get("author") or {}).get("login"),
+        })
+    return items
+
+
+def _parse_gh_dt(s: str | None) -> datetime | None:
+    if not s:
+        return None
+    return datetime.fromisoformat(s.replace("Z", "+00:00"))
+
+
+def get_week_range(weeks_back: int, week_start: int) -> tuple[date, date]:
+    today = date.today()
+    days_since_start = (today.weekday() - week_start) % 7
+    start = today - timedelta(days=days_since_start) - timedelta(weeks=weeks_back)
+    return start, start + timedelta(days=6)
+
+
+def filter_items_by_week(nodes: list, start: date, end: date, exclude_epics: bool = True) -> list:
+    start_dt = datetime.combine(start, dt_time.min, tzinfo=timezone.utc)
+    end_dt = datetime.combine(end, dt_time.max, tzinfo=timezone.utc)
+    items = []
+    for node in nodes:
+        content = node["content"]
+        if content is None:
+            continue
+        if exclude_epics and content["title"].startswith("EPIC:"):
+            continue
+        created = _parse_gh_dt(content.get("createdAt"))
+        closed = _parse_gh_dt(content.get("closedAt")) or _parse_gh_dt(content.get("mergedAt"))
+        if not ((created and start_dt <= created <= end_dt) or
+                (closed and start_dt <= closed <= end_dt)):
+            continue
+        items.append({
+            "type": content["__typename"],
+            "number": content["number"],
+            "title": content["title"],
+            "state": content["state"],
+            "status": (node.get("status") or {}).get("name", "—"),
+            "url": content["url"],
+            "repo": content["repository"]["name"],
+            "author": (content.get("author") or {}).get("login"),
+        })
+    return items
+
+
+def fetch_pr(repo: str, number: int, temp_dir: Path, progress: Progress, task_id: object) -> None:
+    repo_dir = temp_dir / repo
+    repo_api = f"{API_BASE}/{repo}"
+    progress.update(task_id, description=f"Fetching PR #{number} ({repo})...")
+    _save(repo_dir / f"pull_{number}.json", _rest_get(f"{repo_api}/pulls/{number}"))
+    _save(repo_dir / f"pull_reviews_{number}.json", _rest_get(f"{repo_api}/pulls/{number}/reviews"))
+
+
+def fetch_issue(repo: str, number: int, temp_dir: Path, progress: Progress, task_id: object) -> None:
+    repo_dir = temp_dir / repo
+    repo_api = f"{API_BASE}/{repo}"
+
+    progress.update(task_id, description=f"Fetching Issue #{number} ({repo})...")
+    _save(repo_dir / f"issue_{number}.json", _rest_get(f"{repo_api}/issues/{number}"))
+
+    timeline = _rest_get(f"{repo_api}/issues/{number}/timeline")
+    _save(repo_dir / f"issue_events_{number}.json", timeline)
+
+    progress.update(task_id, description=f"Fetching status transitions for Issue #{number}...")
+    transitions = []
+    for event in timeline:
+        if event.get("event") != "project_v2_item_status_changed":
+            continue
+        result = _graphql(f"""
+            query {{
+              node(id: "{event['node_id']}") {{
+                ... on ProjectV2ItemStatusChangedEvent {{
+                  createdAt previousStatus status
+                }}
+              }}
+            }}
+        """)
+        transitions.append(result["data"]["node"])
+    _save(repo_dir / f"issue_status_transitions_{number}.json", transitions)
+
+    progress.update(task_id, description=f"Fetching PRs connected to Issue #{number}...")
+    connected = _graphql(f"""
+        query {{
+          repository(owner: "{OWNER}", name: "{repo}") {{
+            issue(number: {number}) {{
+              timelineItems(itemTypes: [CONNECTED_EVENT, CROSS_REFERENCED_EVENT], first: 25) {{
+                nodes {{
+                  ... on ConnectedEvent {{
+                    subject {{
+                      ... on PullRequest {{ number title author {{ login }} repository {{ name }} }}
+                    }}
+                  }}
+                  ... on CrossReferencedEvent {{
+                    source {{
+                      ... on PullRequest {{ number title author {{ login }} repository {{ name }} }}
+                    }}
+                  }}
+                }}
+              }}
+            }}
+          }}
+        }}
+    """)
+
+    pr_entries: list[dict] = []
+    seen: set[int] = set()
+    for node in connected["data"]["repository"]["issue"]["timelineItems"]["nodes"]:
+        pr = node.get("subject") or node.get("source")
+        if pr and pr.get("number") and pr["number"] not in seen:
+            seen.add(pr["number"])
+            pr_entries.append({
+                "number": pr["number"],
+                "repo": pr["repository"]["name"],
+                "title": pr.get("title", ""),
+                "author": (pr.get("author") or {}).get("login"),
+            })
+    _save(repo_dir / f"issue_pr_map_{number}.json", pr_entries)
+
+    for entry in pr_entries:
+        pr_num, pr_repo = entry["number"], entry["repo"]
+        author_str = f" ({entry['author']})" if entry.get("author") else ""
+        progress.console.print(
+            f"  └─ [PR #{pr_num}] {pr_repo} — {_short(entry['title'])}{author_str}"
+            f" (connected to Issue #{number})"
+        )
+        fetch_pr(pr_repo, pr_num, temp_dir, progress, task_id)
+
+
+def run_report(iteration_title: str, temp_dir: Path, summary: bool) -> None:
+    from . import (
+        create_report,
+        generate_summary,
+        load_issue_metrics_from_dir,
+        load_issue_velocity_from_dir,
+        load_pr_metrics_from_dir,
+        load_pr_review_metrics_from_dir,
+    )
+    data = [
+        load_issue_metrics_from_dir(str(temp_dir)),
+        load_pr_metrics_from_dir(str(temp_dir)),
+        load_pr_review_metrics_from_dir(str(temp_dir)),
+        load_issue_velocity_from_dir(str(temp_dir)),
+    ]
+    create_report(data, iteration_title)
+    if summary:
+        generate_summary(str(temp_dir), iteration_title)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        prog="project_status",
+        description=(
+            "Fetch all issues and PRs from a GitHub Projects v2 iteration "
+            "and generate a metrics report."
+        ),
+    )
+    parser.add_argument(
+        "iteration",
+        metavar="current|<number>",
+        help=(
+            "Iteration mode: iteration number or 'current'. "
+            "Week mode (--week): weeks back from current week, or 'current'."
+        ),
+    )
+    parser.add_argument(
+        "--week",
+        action="store_true",
+        help="Use calendar weeks instead of project iteration tags",
+    )
+    parser.add_argument(
+        "--week-start",
+        metavar="DAY",
+        default=None,
+        help=f"First day of the week (e.g. monday, friday; default: WEEK_START_DAY from github.env or monday)",
+    )
+    parser.add_argument(
+        "--project",
+        type=int,
+        default=_DEFAULT_PROJECT_NUMBER,
+        metavar="N",
+        help=f"GitHub Projects v2 project number (default: {_DEFAULT_PROJECT_NUMBER} from github.env)",
+    )
+    parser.add_argument(
+        "--summary",
+        action="store_true",
+        help="Generate an LLM summary of the iteration after fetching",
+    )
+    parser.add_argument(
+        "--no-fetch",
+        action="store_true",
+        help="Skip data fetching and use existing cached data",
+    )
+    parser.add_argument(
+        "--consider-epics",
+        action="store_true",
+        help="Include EPIC: issues in analysis (excluded by default)",
+    )
+    args = parser.parse_args()
+
+    if not GITHUB_TOKEN:
+        console.print("[red]GITHUB_TOKEN is not set in github.env or environment.[/red]")
+        sys.exit(1)
+
+    # --- resolve title, temp_dir, and optional date filter ---
+    if args.week:
+        day_name = (args.week_start or _DEFAULT_WEEK_START).lower()
+        if day_name not in _WEEKDAY_NAMES:
+            console.print(f"[red]Invalid --week-start value: {day_name!r}. Use monday–sunday.[/red]")
+            sys.exit(1)
+        weeks_back = 0 if args.iteration == "current" else int(args.iteration)
+        week_start_date, week_end_date = get_week_range(weeks_back, _WEEKDAY_NAMES[day_name])
+        iteration_title = f"Week of {week_start_date} – {week_end_date}"
+        temp_dir = PROJECT_ROOT / "temp" / f"week_{week_start_date}"
+        console.print(
+            f"Date range: [bold]{week_start_date}[/bold] ({week_start_date.strftime('%A')})"
+            f" → [bold]{week_end_date}[/bold] ({week_end_date.strftime('%A')})"
+        )
+    else:
+        week_start_date = week_end_date = None
+        if args.iteration == "current":
+            # title resolved inside progress after spinner starts
+            iteration_title = None
+        else:
+            iteration_title = f"Iteration {args.iteration}"
+        temp_dir = None  # set after title is known
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+        transient=True,
+    ) as progress:
+        task = progress.add_task("Starting...", total=None)
+
+        if not args.week:
+            if args.iteration == "current":
+                progress.update(task, description="Fetching current iteration...")
+                iteration_title = resolve_current_iteration(args.project)
+                iteration_num = iteration_title.split()[-1].lstrip("0") or "0"
+            else:
+                iteration_num = args.iteration
+            temp_dir = PROJECT_ROOT / "temp" / f"iteration_{iteration_num}"
+
+        if args.no_fetch:
+            progress.console.print(f"Skipping data fetch → using existing data in [bold]{temp_dir}[/bold]")
+        else:
+            progress.update(task, description=f"Querying {iteration_title} from Projects v2...")
+            all_nodes = fetch_project_items(args.project, progress, task)
+
+            exclude_epics = not args.consider_epics
+            if args.week:
+                items = filter_items_by_week(all_nodes, week_start_date, week_end_date, exclude_epics)
+            else:
+                items = filter_items(all_nodes, iteration_title, exclude_epics)
+
+            progress.console.print(f"Found [bold]{len(items)}[/bold] items in {iteration_title}\n")
+
+            for item in items:
+                number, repo, title = item["number"], item["repo"], item["title"]
+                if item["type"] == "PullRequest":
+                    author_str = f" ({item['author']})" if item.get("author") else ""
+                    progress.console.print(f"[PR #{number}] {repo} — {_short(title)}{author_str}")
+                    fetch_pr(repo, number, temp_dir, progress, task)
+                elif item["type"] == "Issue":
+                    progress.console.print(f"[Issue #{number}] {repo} — {_short(title)}")
+                    fetch_issue(repo, number, temp_dir, progress, task)
+
+            progress.console.print(f"\nData collection complete → [bold]{temp_dir}/[/bold]\n")
+
+    run_report(iteration_title, temp_dir, args.summary)
+
+
+if __name__ == "__main__":
+    main()
