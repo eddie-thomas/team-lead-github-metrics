@@ -32,6 +32,10 @@ _WEEKDAY_NAMES = {
 console = Console()
 
 
+def _short(title: str, n: int = 50) -> str:
+    return title if len(title) <= n else title[: n - 1] + "…"
+
+
 def _graphql(query: str) -> dict:
     resp = requests.post(
         GRAPHQL_URL,
@@ -112,7 +116,7 @@ def fetch_project_items(project_number: int, progress: Progress, task_id: object
                       content {{
                         __typename
                         ... on Issue {{ number title state url createdAt closedAt repository {{ name }} }}
-                        ... on PullRequest {{ number title state url createdAt closedAt mergedAt repository {{ name }} }}
+                        ... on PullRequest {{ number title state url createdAt closedAt mergedAt author {{ login }} repository {{ name }} }}
                       }}
                       iteration: fieldValueByName(name: "Iteration") {{
                         ... on ProjectV2ItemFieldIterationValue {{ title iterationId }}
@@ -135,13 +139,15 @@ def fetch_project_items(project_number: int, progress: Progress, task_id: object
     return all_nodes
 
 
-def filter_items(nodes: list, iteration_title: str) -> list:
+def filter_items(nodes: list, iteration_title: str, exclude_epics: bool = True) -> list:
     items = []
     for node in nodes:
         it = node.get("iteration")
         if not isinstance(it, dict) or it.get("title") != iteration_title:
             continue
         content = node["content"]
+        if exclude_epics and content["title"].startswith("EPIC:"):
+            continue
         items.append({
             "type": content["__typename"],
             "number": content["number"],
@@ -150,6 +156,7 @@ def filter_items(nodes: list, iteration_title: str) -> list:
             "status": (node.get("status") or {}).get("name", "—"),
             "url": content["url"],
             "repo": content["repository"]["name"],
+            "author": (content.get("author") or {}).get("login"),
         })
     return items
 
@@ -167,13 +174,15 @@ def get_week_range(weeks_back: int, week_start: int) -> tuple[date, date]:
     return start, start + timedelta(days=6)
 
 
-def filter_items_by_week(nodes: list, start: date, end: date) -> list:
+def filter_items_by_week(nodes: list, start: date, end: date, exclude_epics: bool = True) -> list:
     start_dt = datetime.combine(start, dt_time.min, tzinfo=timezone.utc)
     end_dt = datetime.combine(end, dt_time.max, tzinfo=timezone.utc)
     items = []
     for node in nodes:
         content = node["content"]
         if content is None:
+            continue
+        if exclude_epics and content["title"].startswith("EPIC:"):
             continue
         created = _parse_gh_dt(content.get("createdAt"))
         closed = _parse_gh_dt(content.get("closedAt")) or _parse_gh_dt(content.get("mergedAt"))
@@ -188,6 +197,7 @@ def filter_items_by_week(nodes: list, start: date, end: date) -> list:
             "status": (node.get("status") or {}).get("name", "—"),
             "url": content["url"],
             "repo": content["repository"]["name"],
+            "author": (content.get("author") or {}).get("login"),
         })
     return items
 
@@ -236,12 +246,12 @@ def fetch_issue(repo: str, number: int, temp_dir: Path, progress: Progress, task
                 nodes {{
                   ... on ConnectedEvent {{
                     subject {{
-                      ... on PullRequest {{ number repository {{ name }} }}
+                      ... on PullRequest {{ number title author {{ login }} repository {{ name }} }}
                     }}
                   }}
                   ... on CrossReferencedEvent {{
                     source {{
-                      ... on PullRequest {{ number repository {{ name }} }}
+                      ... on PullRequest {{ number title author {{ login }} repository {{ name }} }}
                     }}
                   }}
                 }}
@@ -257,12 +267,21 @@ def fetch_issue(repo: str, number: int, temp_dir: Path, progress: Progress, task
         pr = node.get("subject") or node.get("source")
         if pr and pr.get("number") and pr["number"] not in seen:
             seen.add(pr["number"])
-            pr_entries.append({"number": pr["number"], "repo": pr["repository"]["name"]})
+            pr_entries.append({
+                "number": pr["number"],
+                "repo": pr["repository"]["name"],
+                "title": pr.get("title", ""),
+                "author": (pr.get("author") or {}).get("login"),
+            })
     _save(repo_dir / f"issue_pr_map_{number}.json", pr_entries)
 
     for entry in pr_entries:
         pr_num, pr_repo = entry["number"], entry["repo"]
-        progress.console.print(f"  └─ [PR #{pr_num}] {pr_repo} (connected to Issue #{number})")
+        author_str = f" ({entry['author']})" if entry.get("author") else ""
+        progress.console.print(
+            f"  └─ [PR #{pr_num}] {pr_repo} — {_short(entry['title'])}{author_str}"
+            f" (connected to Issue #{number})"
+        )
         fetch_pr(pr_repo, pr_num, temp_dir, progress, task_id)
 
 
@@ -330,6 +349,11 @@ def main() -> None:
         action="store_true",
         help="Skip data fetching and use existing cached data",
     )
+    parser.add_argument(
+        "--consider-epics",
+        action="store_true",
+        help="Include EPIC: issues in analysis (excluded by default)",
+    )
     args = parser.parse_args()
 
     if not GITHUB_TOKEN:
@@ -382,20 +406,22 @@ def main() -> None:
             progress.update(task, description=f"Querying {iteration_title} from Projects v2...")
             all_nodes = fetch_project_items(args.project, progress, task)
 
+            exclude_epics = not args.consider_epics
             if args.week:
-                items = filter_items_by_week(all_nodes, week_start_date, week_end_date)
+                items = filter_items_by_week(all_nodes, week_start_date, week_end_date, exclude_epics)
             else:
-                items = filter_items(all_nodes, iteration_title)
+                items = filter_items(all_nodes, iteration_title, exclude_epics)
 
             progress.console.print(f"Found [bold]{len(items)}[/bold] items in {iteration_title}\n")
 
             for item in items:
-                number, repo = item["number"], item["repo"]
+                number, repo, title = item["number"], item["repo"], item["title"]
                 if item["type"] == "PullRequest":
-                    progress.console.print(f"[PR #{number}] {repo}")
+                    author_str = f" ({item['author']})" if item.get("author") else ""
+                    progress.console.print(f"[PR #{number}] {repo} — {_short(title)}{author_str}")
                     fetch_pr(repo, number, temp_dir, progress, task)
                 elif item["type"] == "Issue":
-                    progress.console.print(f"[Issue #{number}] {repo}")
+                    progress.console.print(f"[Issue #{number}] {repo} — {_short(title)}")
                     fetch_issue(repo, number, temp_dir, progress, task)
 
             progress.console.print(f"\nData collection complete → [bold]{temp_dir}/[/bold]\n")
