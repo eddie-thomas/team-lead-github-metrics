@@ -14,10 +14,7 @@ dependencies = [
 ]
 
 [project.scripts]
-project_status = "query_iteration:main"
-
-[tool.setuptools]
-py-modules = ["query_iteration"]
+project_status = "metrics.main:main"
 
 [tool.setuptools.packages.find]
 include = ["metrics*"]

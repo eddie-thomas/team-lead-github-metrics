@@ -13,8 +13,8 @@ from dotenv import load_dotenv
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
-SCRIPT_DIR = Path(__file__).parent
-load_dotenv(SCRIPT_DIR / "github.env")
+PROJECT_ROOT = Path(__file__).parent.parent
+load_dotenv(PROJECT_ROOT / "github.env")
 
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
 _DEFAULT_PROJECT_NUMBER = int(os.environ.get("PROJECT_NUMBER", "82"))
@@ -222,7 +222,7 @@ def fetch_issue(repo: str, number: int, temp_dir: Path, progress: Progress, task
 
 
 def run_report(iteration_title: str, temp_dir: Path, summary: bool) -> None:
-    from metrics import (
+    from . import (
         create_report,
         generate_summary,
         load_issue_metrics_from_dir,
@@ -293,7 +293,7 @@ def main() -> None:
             iteration_num = args.iteration
             iteration_title = f"Iteration {iteration_num}"
 
-        temp_dir = SCRIPT_DIR / "temp" / f"iteration_{iteration_num}"
+        temp_dir = PROJECT_ROOT / "temp" / f"iteration_{iteration_num}"
 
         if args.no_fetch:
             progress.console.print(f"Skipping data fetch → using existing data in [bold]{temp_dir}[/bold]")
