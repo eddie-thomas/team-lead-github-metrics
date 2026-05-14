@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "team-lead-github-metrics"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "ollama",
+    "python-dotenv",
+    "requests",
+    "rich",
+]
+
+[project.scripts]
+project_status = "query_iteration:main"
+
+[tool.setuptools]
+py-modules = ["query_iteration"]
+
+[tool.setuptools.packages.find]
+include = ["metrics*"]
