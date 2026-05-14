@@ -15,6 +15,7 @@ print_usage() {
   echo "  current | <iteration_number>   The iteration number to query (e.g. current, 24)"
   echo ""
   echo "Options:"
+  echo "  --project <number>   GitHub Projects v2 project number (default: \$PROJECT_NUMBER from github.env)"
   echo "  --summary            Generate an LLM summary of the iteration after fetching"
   echo "  --no-fetch           Skip data fetching and use existing cached data"
   echo "  -h, --help           Show this help message"
@@ -23,6 +24,7 @@ print_usage() {
   echo "  $0 24"
   echo "  $0 current --summary"
   echo "  $0 24 --no-fetch --summary"
+  echo "  $0 24 --project 99"
 }
 
 if [ -z "$1" ]; then
@@ -40,8 +42,16 @@ done
 ITERATION_NUM="$1"
 SUMMARY_FLAG=""
 NO_FETCH=false
+PROJECT_NUMBER="${PROJECT_NUMBER:-82}"
+_SKIP_NEXT=false
 for arg in "${@:2}"; do
+  if [ "$_SKIP_NEXT" = true ]; then
+    PROJECT_NUMBER="$arg"
+    _SKIP_NEXT=false
+    continue
+  fi
   case "$arg" in
+    --project) _SKIP_NEXT=true ;;
     --summary) SUMMARY_FLAG="--summary" ;;
     --no-fetch) NO_FETCH=true ;;
   esac
@@ -54,9 +64,9 @@ if [[ "$ITERATION_NUM" == "current" ]]; then
   ITERATION_TITLE=$(curl -s -X POST https://api.github.com/graphql \
     -H "Authorization: Bearer $GITHUB_TOKEN" \
     -H "Content-Type: application/json" \
-    -d '{
-      "query": "query { organization(login: \"semanticarts\") { projectV2(number: 82) { field(name: \"Iteration\") { ... on ProjectV2IterationField { configuration { iterations { id title startDate duration } } } } } } }"
-    }' | jq -r '
+    -d "{
+      \"query\": \"query { organization(login: \\\"semanticarts\\\") { projectV2(number: $PROJECT_NUMBER) { field(name: \\\"Iteration\\\") { ... on ProjectV2IterationField { configuration { iterations { id title startDate duration } } } } } } }\"
+    }" | jq -r '
       .data.organization.projectV2.field.configuration.iterations[]
       | . as $i
       | ($i.startDate | strptime("%Y-%m-%d") | mktime) as $start
@@ -139,7 +149,7 @@ while true; do
     -H "Authorization: Bearer $GITHUB_TOKEN" \
     -H "Content-Type: application/json" \
     -d "{
-      \"query\": \"query { organization(login: \\\"semanticarts\\\") { projectV2(number: 82) { items(first: 100$AFTER_ARG) { pageInfo { hasNextPage endCursor } nodes { content { __typename ... on Issue { number title state url repository { name } } ... on PullRequest { number title state url repository { name } } } iteration: fieldValueByName(name: \\\"Iteration\\\") { ... on ProjectV2ItemFieldIterationValue { title iterationId } } status: fieldValueByName(name: \\\"Status\\\") { ... on ProjectV2ItemFieldSingleSelectValue { name } } } } } } }\"
+      \"query\": \"query { organization(login: \\\"semanticarts\\\") { projectV2(number: $PROJECT_NUMBER) { items(first: 100$AFTER_ARG) { pageInfo { hasNextPage endCursor } nodes { content { __typename ... on Issue { number title state url repository { name } } ... on PullRequest { number title state url repository { name } } } iteration: fieldValueByName(name: \\\"Iteration\\\") { ... on ProjectV2ItemFieldIterationValue { title iterationId } } status: fieldValueByName(name: \\\"Status\\\") { ... on ProjectV2ItemFieldSingleSelectValue { name } } } } } } }\"
     }")
 
   if echo "$RESPONSE" | jq -e '.errors' > /dev/null 2>&1; then
